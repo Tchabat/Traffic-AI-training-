@@ -4,49 +4,114 @@ from PIL import Image, ImageTk
 import cv2
 import numpy as np
 import tensorflow as tf
-import json
 import os
 
 IMAGE_SIZE = (30, 30)
 
 class TrafficSignClassifier:
     def __init__(self, model_file):
+        if not os.path.exists(model_file):
+            raise FileNotFoundError(f"Model file not found: {model_file}")
+            
+        print(f"Loading model from {model_file}")
         self.model = tf.keras.models.load_model(model_file)
-        categories_path = os.path.splitext(model_file)[0] + "_categories.json"
-        
-        with open(categories_path, "r") as f:
-            self.categories = json.load(f)
         
         self.root = tk.Tk()
         self.root.title("Traffic Sign Classifier")
-        self.root.geometry("1000x600")
+        self.root.geometry("1200x700")
+        self.root.configure(bg='#f0f0f0')
         
-        # Layout frames
-        self.left_panel = ttk.Frame(self.root, padding="10")
-        self.left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Configure style
+        self.style = ttk.Style()
+        self.style.configure('Modern.TFrame', background='#f0f0f0')
+        self.style.configure('Modern.TButton',
+                           font=('Helvetica', 12),
+                           padding=10,
+                           background='#2196F3')
+        self.style.configure('Title.TLabel',
+                           font=('Helvetica', 24, 'bold'),
+                           background='#f0f0f0',
+                           foreground='#1976D2')
+        self.style.configure('Info.TLabel',
+                           font=('Helvetica', 12),
+                           background='#ffffff',
+                           padding=5)
         
-        self.right_panel = ttk.Frame(self.root, padding="10")
-        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH)
+        # Main container
+        self.main_container = ttk.Frame(self.root, style='Modern.TFrame')
+        self.main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        # Left panel widgets
-        ttk.Label(self.left_panel, text="Traffic Sign Recognition", font=('Helvetica', 16, 'bold')).pack(pady=10)
-        ttk.Button(self.left_panel, text="Select Image", command=self.load_image).pack(pady=10)
+        # Title
+        title_frame = ttk.Frame(self.main_container, style='Modern.TFrame')
+        title_frame.pack(fill=tk.X, pady=(0, 20))
+        ttk.Label(title_frame,
+                 text="Traffic Sign Recognition",
+                 style='Title.TLabel').pack()
         
-        self.image_display = ttk.Label(self.left_panel)
-        self.image_display.pack(pady=10)
+        # Content container with shadow effect
+        self.content_frame = tk.Frame(self.main_container,
+                                    bg='#ffffff',
+                                    relief='solid',
+                                    borderwidth=1)
+        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Right panel widgets
-        self.result_container = ttk.LabelFrame(self.right_panel, text="Prediction", padding="10")
-        self.result_container.pack(fill=tk.BOTH, expand=True)
+        # Left panel (Image display)
+        self.left_panel = ttk.Frame(self.content_frame, style='Modern.TFrame')
+        self.left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        self.category_info = ttk.Label(self.result_container, text="Category: ")
-        self.category_info.pack(pady=5, anchor=tk.W)
+        # Image placeholder
+        self.image_frame = tk.Frame(self.left_panel, bg='#f5f5f5')
+        self.image_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        self.sign_info = ttk.Label(self.result_container, text="Sign: ")
-        self.sign_info.pack(pady=5, anchor=tk.W)
+        self.image_display = ttk.Label(self.image_frame)
+        self.image_display.pack(pady=20)
         
-        self.confidence_info = ttk.Label(self.result_container, text="Confidence: ")
-        self.confidence_info.pack(pady=5, anchor=tk.W)
+        self.upload_btn = ttk.Button(self.left_panel,
+                                   text="Select Image",
+                                   command=self.load_image,
+                                   style='Modern.TButton')
+        self.upload_btn.pack(pady=20)
+        
+        # Right panel (Results)
+        self.right_panel = ttk.Frame(self.content_frame, style='Modern.TFrame')
+        self.right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, padx=20, pady=20)
+        
+        # Results container
+        self.result_container = tk.Frame(self.right_panel,
+                                       bg='#ffffff',
+                                       relief='solid',
+                                       borderwidth=1)
+        self.result_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        ttk.Label(self.result_container,
+                 text="Recognition Results",
+                 style='Title.TLabel',
+                 font=('Helvetica', 18, 'bold')).pack(pady=20)
+        
+        # Results info with modern styling
+        self.category_info = ttk.Label(self.result_container,
+                                     text="Category: Waiting for image...",
+                                     style='Info.TLabel')
+        self.category_info.pack(pady=10, padx=20, fill=tk.X)
+        
+        self.sign_info = ttk.Label(self.result_container,
+                                  text="Sign: Waiting for image...",
+                                  style='Info.TLabel')
+        self.sign_info.pack(pady=10, padx=20, fill=tk.X)
+        
+        self.confidence_frame = tk.Frame(self.result_container, bg='#ffffff')
+        self.confidence_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        self.confidence_info = ttk.Label(self.confidence_frame,
+                                       text="Confidence: 0%",
+                                       style='Info.TLabel')
+        self.confidence_info.pack(side=tk.LEFT)
+        
+        # Progress bar for confidence
+        self.confidence_bar = ttk.Progressbar(self.confidence_frame,
+                                            length=200,
+                                            mode='determinate')
+        self.confidence_bar.pack(side=tk.RIGHT, padx=10)
     
     def classify_sign(self, img_path):
         """Processes the image and predicts the traffic sign."""
@@ -72,25 +137,90 @@ class TrafficSignClassifier:
         prediction = self.model.predict(processed_img, verbose=0)[0]
         best_match = np.argmax(prediction)
         confidence = float(prediction[best_match])
-        label = self.categories.get(str(best_match), "Unknown")
         
-        return best_match, label, confidence
+        return best_match, confidence
+    
+    def update_results(self, category, confidence):
+        self.category_info.config(text=f"Category: {category}")
+        self.sign_info.config(text=f"Sign Type: {self.get_sign_description(category)}")
+        self.confidence_info.config(text=f"Confidence: {confidence:.1%}")
+        self.confidence_bar['value'] = confidence * 100
+        
+    def get_sign_description(self, category):
+        signs = {
+            0: "Speed limit (20km/h)",
+            1: "Speed limit (30km/h)",
+            2: "Speed limit (50km/h)",
+            3: "Speed limit (60km/h)",
+            4: "Speed limit (70km/h)",
+            5: "Speed limit (80km/h)",
+            6: "End of speed limit (80km/h)",
+            7: "Speed limit (100km/h)",
+            8: "Speed limit (120km/h)",
+            9: "No passing",
+            10: "No passing for vehicles over 3.5 metric tons",
+            11: "Right-of-way at the next intersection",
+            12: "Priority road",
+            13: "Yield",
+            14: "Stop",
+            15: "No vehicles",
+            16: "Vehicles over 3.5 metric tons prohibited",
+            17: "No entry",
+            18: "General caution",
+            19: "Dangerous curve to the left",
+            20: "Dangerous curve to the right",
+            21: "Double curve",
+            22: "Bumpy road",
+            23: "Slippery road",
+            24: "Road narrows on the right",
+            25: "Road work",
+            26: "Traffic signals",
+            27: "Pedestrians",
+            28: "Children crossing",
+            29: "Bicycles crossing",
+            30: "Beware of ice/snow",
+            31: "Wild animals crossing",
+            32: "End of all speed and passing limits",
+            33: "Turn right ahead",
+            34: "Turn left ahead",
+            35: "Ahead only",
+            36: "Go straight or right",
+            37: "Go straight or left",
+            38: "Keep right",
+            39: "Keep left",
+            40: "Roundabout mandatory",
+            41: "End of no passing",
+            42: "End of no passing by vehicles over 3.5 metric tons"
+        }
+        return signs.get(category, f"Unknown Sign (Category {category})")
     
     def load_image(self):
-        path = filedialog.askopenfilename()
+        path = filedialog.askopenfilename(
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.gif *.bmp *.ppm")])
         if path:
-            img = Image.open(path)
-            img.thumbnail((400, 400))
-            img_display = ImageTk.PhotoImage(img)
-            self.image_display.config(image=img_display)
-            self.image_display.image = img_display
+            # Show loading state
+            self.upload_btn.config(state='disabled')
+            self.category_info.config(text="Processing...")
+            self.root.update()
             
-            result = self.classify_sign(path)
-            if result:
-                best_match, label, confidence = result
-                self.category_info.config(text=f"Category: {best_match}")
-                self.sign_info.config(text=f"Sign: {label}")
-                self.confidence_info.config(text=f"Confidence: {confidence:.3%}")
+            try:
+                # Load and display image
+                img = Image.open(path)
+                # Calculate aspect ratio for resizing
+                display_size = (350, 350)
+                img.thumbnail(display_size, Image.Resampling.LANCZOS)
+                img_display = ImageTk.PhotoImage(img)
+                self.image_display.config(image=img_display)
+                self.image_display.image = img_display
+                
+                # Classify image
+                result = self.classify_sign(path)
+                if result:
+                    self.update_results(*result)
+            except Exception as e:
+                self.category_info.config(text=f"Error: {str(e)}")
+            finally:
+                self.upload_btn.config(state='normal')
     
     def start(self):
         self.root.mainloop()

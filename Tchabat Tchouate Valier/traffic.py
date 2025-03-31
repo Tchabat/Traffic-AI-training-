@@ -1,147 +1,120 @@
-import os
-import sys
 import cv2
 import numpy as np
+import os
+import sys
 import tensorflow as tf
-from sklearn.model_selection import train_test_split
-from keras.preprocessing.image import ImageDataGenerator # type: ignore
 
-# Constants
-EPOCHS = 20  # Training iterations
-IMG_SIZE = (30, 30)
-NUM_CLASSES = 43
-TEST_RATIO = 0.4
+from sklearn.model_selection import train_test_split
+
+EPOCHS = 10
+IMG_WIDTH = 30
+IMG_HEIGHT = 30
+NUM_CATEGORIES = 43
+TEST_SIZE = 0.4
+
 
 def main():
-    # Ensure correct usage
-    if len(sys.argv) not in [2, 3, 4]:
-        sys.exit("Usage: python traffic.py data_directory [best_model.h5] [test]")
-    
-    # Load dataset
-    image_data, class_labels = load_dataset(sys.argv[1])
-    class_labels = tf.keras.utils.to_categorical(class_labels)
-    
-    # Split into training and test sets
-    x_train, x_test, y_train, y_test = train_test_split(
-        np.array(image_data), np.array(class_labels), test_size=TEST_RATIO
-    )
-    
-    # Normalize inputs
-    x_train, x_test = x_train.astype('float32') / 255.0, x_test.astype('float32') / 255.0
-    
-    # Check if a model should be loaded
-    if len(sys.argv) >= 3:
-        try:
-            model = tf.keras.models.load_model(sys.argv[2])
-            print(f"Model loaded from {sys.argv[2]}")
-        except Exception as error:
-            sys.exit(f"Failed to load model: {error}")
-        
-        # Evaluate model if "test" argument is given
-        if len(sys.argv) == 4 and sys.argv[3] == "test":
-            print("Evaluating model...")
-            loss, accuracy = model.evaluate(x_test, y_test, verbose=2)
-            print(f"Accuracy: {accuracy * 100:.2f}%")
-            return
-        
-        # Make predictions otherwise
-        print("Generating predictions...")
-        predictions = model.predict(x_test)
-        correct_count = sum(np.argmax(pred) == np.argmax(actual) for pred, actual in zip(predictions, y_test))
-        print(f"Correctly predicted {correct_count} out of {len(predictions)} ({correct_count / len(predictions) * 100:.2f}%)")
-        return
-    
-    # Train a new model if none provided
-    model = build_model()
-    
-    # Image augmentation
-    augmentor = ImageDataGenerator(
-        rotation_range=10, zoom_range=0.15,
-        width_shift_range=0.1, height_shift_range=0.1,
-        horizontal_flip=False, fill_mode='nearest'
-    )
-    
-    # Early stopping callback
-    early_stop = tf.keras.callbacks.EarlyStopping(
-        monitor='val_loss', patience=3, restore_best_weights=True
-    )
-    
-    # Train the model
-    model.fit(
-        augmentor.flow(x_train, y_train, batch_size=32),
-        epochs=EPOCHS, validation_data=(x_test, y_test),
-        callbacks=[early_stop]
-    )
-    
-    # Evaluate model
-    model.evaluate(x_test, y_test, verbose=2)
-    
-    # Save model
-    save_path = sys.argv[2] if len(sys.argv) == 3 else "best_model.h5"
-    model.save(save_path)
-    print(f"Model stored in {save_path}")
 
-def load_dataset(directory):
+    # Check command-line arguments
+    if len(sys.argv) not in [2, 3]:
+        sys.exit("Usage: python traffic.py data_directory [best_model.h5]")
+
+    # Get image arrays and labels for all image files
+    images, labels = load_data(sys.argv[1])
+
+    # Split data into training and testing sets
+    labels = tf.keras.utils.to_categorical(labels)
+    x_train, x_test, y_train, y_test = train_test_split(
+        np.array(images), np.array(labels), test_size=TEST_SIZE
+    )
+
+    # Get a compiled neural network
+    model = get_model()
+
+    # Fit model on training data
+    model.fit(x_train, y_train, epochs=EPOCHS)
+
+    # Evaluate neural network performance
+    model.evaluate(x_test,  y_test, verbose=2)
+
+    # Save model to file
+    if len(sys.argv) == 3:
+        filename = sys.argv[2]
+        model.save(filename)
+        print(f"Model saved to {filename}.")
+
+
+def load_data(data_dir):
     """
-    Load images and labels from the dataset directory.
+    Load image data from directory `data_dir`.
+
+    Assume `data_dir` has one directory named after each category, numbered
+    0 through NUM_CATEGORIES - 1. Inside each category directory will be some
+    number of image files.
+
+    Return tuple `(images, labels)`. `images` should be a list of all
+    of the images in the data directory, where each image is formatted as a
+    numpy ndarray with dimensions IMG_WIDTH x IMG_HEIGHT x 3. `labels` should
+    be a list of integer labels, representing the categories for each of the
+    corresponding `images`.
     """
-    images, labels = [], []
-    for category in range(NUM_CLASSES):
-        category_folder = os.path.join(directory, str(category))
-        if not os.path.isdir(category_folder):
+    images = []
+    labels = []
+
+    # Iterate through each category directory
+    for category in range(NUM_CATEGORIES):
+        category_path = os.path.join(data_dir, str(category))
+        if not os.path.isdir(category_path):
             continue
-        
-        for filename in os.listdir(category_folder):
-            file_path = os.path.join(category_folder, filename)
-            try:
-                image = cv2.imread(file_path)
-                if image is not None:
-                    images.append(cv2.resize(image, IMG_SIZE))
-                    labels.append(category)
-            except Exception as error:
-                print(f"Skipped {file_path}: {error}")
-                continue
+
+        # Iterate through each image in the category directory
+        for filename in os.listdir(category_path):
+            filepath = os.path.join(category_path, filename)
+            # Read and resize the image
+            image = cv2.imread(filepath)
+            if image is not None:
+                image = cv2.resize(image, (IMG_WIDTH, IMG_HEIGHT))
+                images.append(image)
+                labels.append(category)
+
     return images, labels
 
-def build_model():
-    """Creates and compiles a CNN model."""
+
+def get_model():
+    """
+    Returns a compiled convolutional neural network model. Assume that the
+    `input_shape` of the first layer is `(IMG_WIDTH, IMG_HEIGHT, 3)`.
+    The output layer should have `NUM_CATEGORIES` units, one for each category.
+    """
     model = tf.keras.models.Sequential([
-        tf.keras.layers.experimental.preprocessing.Rescaling(1./255, input_shape=(*IMG_SIZE, 3)),
-        tf.keras.layers.Conv2D(32, (3, 3), padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(32, (3, 3), activation='relu'),
-        tf.keras.layers.BatchNormalization(),
+        # Convolutional layer with 32 filters, 3x3 kernel, ReLU activation
+        tf.keras.layers.Conv2D(32, (3, 3), activation="relu", input_shape=(IMG_WIDTH, IMG_HEIGHT, 3)),
         tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
-        tf.keras.layers.Dropout(0.25),
-        
-        tf.keras.layers.Conv2D(64, (3, 3), padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
-        tf.keras.layers.BatchNormalization(),
+
+        # Second convolutional layer with 64 filters
+        tf.keras.layers.Conv2D(64, (3, 3), activation="relu"),
         tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
-        tf.keras.layers.Dropout(0.25),
-        
-        tf.keras.layers.Conv2D(128, (3, 3), padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
-        tf.keras.layers.Dropout(0.25),
-        
+
+        # Flatten the output
         tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(512, activation='relu'),
-        tf.keras.layers.BatchNormalization(),
+
+        # Add a dense hidden layer with 128 units
+        tf.keras.layers.Dense(128, activation="relu"),
         tf.keras.layers.Dropout(0.5),
-        tf.keras.layers.Dense(256, activation='relu'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Dropout(0.5),
-        tf.keras.layers.Dense(NUM_CLASSES, activation='softmax')
+
+        # Output layer with NUM_CATEGORIES units
+        tf.keras.layers.Dense(NUM_CATEGORIES, activation="softmax")
     ])
-    
+
+    # Compile the model
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-        loss='categorical_crossentropy',
-        metrics=['accuracy']
+        optimizer="adam",
+        loss="categorical_crossentropy",
+        metrics=["accuracy"]
     )
-    
+
     return model
+
 
 if __name__ == "__main__":
     main()
